@@ -1,77 +1,61 @@
 import sys
-import argparse
 import getpass
 import imaplib
-import json
 import os.path
+import argh
+import ConfigParser
 
-def main(argv):
-    defaults = {}
-    CONFIG_PATH = os.path.join(os.environ['HOME'], '.mailpy')
-    if os.path.isfile(CONFIG_PATH):
-        with open(CONFIG_PATH) as f:
-            defaults = json.load(f)
-
-    def add_arg(parser, name, default_default=None):
-        d = defaults.get(name, default_default)
-        if d is not None:
-            parser.add_argument('--' + name, default=d)
-        else:
-            parser.add_argument('--' + name, required=True)
+config = ConfigParser.ConfigParser()
+config.readfp(open('defaults.cfg'))
+config.read([os.path.expanduser('~/.mailpy.cfg')])
 
 
-    parser = argparse.ArgumentParser()
-    add_arg(parser, 'username')
-    add_arg(parser, 'password', '-')
-    add_arg(parser, 'host')
-    add_arg(parser, 'port', 993)
-
-    parser.add_argument('--delete-messages', default=False, action='store_true')
-    parser.add_argument('--print-headers', default=False, action='store_true')
-
-    parser.add_argument('--to', default=None)
-    parser.add_argument('--from', dest='from_addr', default=None)
-    parser.add_argument('--subject', default=None)
-
-    args = parser.parse_args()
+def main(username=config.get('mailpy', 'username'),
+         password=config.get('mailpy', 'password'),
+         host=config.get('mailpy', 'host'),
+         port=config.get('mailpy', 'port'),
+         delete_messages=False,
+         print_headers=True,
+         from_addr=None,
+         to_addr=None,
+         subject=None):
 
     search_criteria = []
-    if args.to != None:
-        search_criteria.extend(['TO', args.to])
-    if args.from_addr != None:
-        search_criteria.extend(['FROM', args.from_addr])
-    if args.subject != None:
-        search_criteria.extend(['SUBJECT', args.subject])
+    if to_addr is not None:
+        search_criteria.extend(['TO', to_addr])
+    if from_addr is not None:
+        search_criteria.extend(['FROM', from_addr])
+    if subject is not None:
+        search_criteria.extend(['SUBJECT', subject])
 
     if len(search_criteria) == 0:
         print >>sys.stderr, "No search criteria specified"
         sys.exit(1)
 
-    if args.password == '-':
-        args.password = getpass.getpass()
+    if password == '-':
+        password = getpass.getpass()
 
-    imap = imaplib.IMAP4_SSL(args.host, args.port)
-    imap.login(args.username, args.password)
+    imap = imaplib.IMAP4_SSL(host, port)
+    imap.login(username, password)
     imap.select('INBOX')
 
-    _, uids = imap.uid('SEARCH', *search_criteria)
-    uids = uids[0].split()
+    _, (uids, _) = imap.uid('SEARCH', *search_criteria)
+    uids = uids.split()
     print >>sys.stderr, 'Matches %d messages' % len(uids)
 
-    if not args.delete_messages and not args.print_headers:
+    if not delete_messages and not print_headers:
         return
 
     for i, uid in enumerate(uids):
         if i % 10 == 0:
             print (i + 1), 'of', len(uids)
-        if args.print_headers:
+        if print_headers:
             print imap.uid('FETCH', uid, '(BODY.PEEK[HEADER])')[1][0][1].strip()
-        if args.delete_messages:
+        if delete_messages:
             imap.uid('STORE', uid, '+FLAGS', '(\\Deleted)')
 
-    if args.delete_messages and len(uids) > 0:
+    if delete_messages and uids:
         imap.expunge()
-            
 
 if __name__ == '__main__':
-    main(sys.argv)
+    argh.dispatch_command(main)
